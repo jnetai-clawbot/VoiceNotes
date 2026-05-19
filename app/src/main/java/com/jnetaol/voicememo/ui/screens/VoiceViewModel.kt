@@ -10,6 +10,8 @@ import com.jnetaol.voicememo.logger.VoiceLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
 
 class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val db = VoiceDatabase.getInstance(application)

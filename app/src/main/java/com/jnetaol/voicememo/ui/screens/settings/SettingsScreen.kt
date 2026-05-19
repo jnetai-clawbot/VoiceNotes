@@ -55,15 +55,15 @@ fun SettingsScreen(viewModel: VoiceViewModel, onNavigateBack: () -> Unit) {
             VMSectionHeader("About")
             VMNeonCard {
                 SettingsRow(Icons.Default.Info, "VoiceMemo v1.0.0", "Offline Voice Notes to Text", onClick = {})
-                HorizontalDivider(color = VMSurfaceVariant)
+                Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.Language, "Made By jnetaol.com", "Visit our website") {
                     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://jnetaol.com"))) } catch (_: Exception) {}
                 }
-                HorizontalDivider(color = VMSurfaceVariant)
+                Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.SystemUpdateAlt, "Check For Updates", "See latest release on GitHub") {
                     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jnetaol/voicememo/releases"))) } catch (_: Exception) {}
                 }
-                HorizontalDivider(color = VMSurfaceVariant)
+                Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.Share, "Share App", "Share latest release link") {
                     val intent = Intent(Intent.ACTION_SEND).apply { putExtra(Intent.EXTRA_TEXT, "Check out VoiceMemo: https://github.com/jnetaol/voicememo/releases"); type = "text/plain" }
                     context.startActivity(Intent.createChooser(intent, "Share"))

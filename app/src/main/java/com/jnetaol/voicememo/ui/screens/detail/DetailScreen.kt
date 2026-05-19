@@ -25,6 +25,9 @@ import com.jnetaol.voicememo.ui.screens.VoiceViewModel
 import com.jnetaol.voicememo.ui.screens.home.formatTime
 import com.jnetaol.voicememo.ui.theme.*
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -86,32 +89,32 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
             // Export
             Spacer(Modifier.height(16.dp)); VMSectionHeader("Export Options")
             Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
-                VMGlowButton("Copy Text", Icons.Default.ContentCopy, glowColor = VMSecondary, modifier = Modifier.weight(1f)) { clipboard.setText(AnnotatedString(recording.transcription.ifBlank { "No transcription" })); viewModel.showToast("Copied") }
-                VMGlowButton("Share", Icons.Default.Share, glowColor = VMNeonPurple, modifier = Modifier.weight(1f)) {
+                VMGlowButton("Copy Text", Icons.Default.ContentCopy, onClick = { clipboard.setText(AnnotatedString(recording.transcription.ifBlank { "No transcription" })); viewModel.showToast("Copied") }, glowColor = VMSecondary, modifier = Modifier.weight(1f))
+                VMGlowButton("Share", Icons.Default.Share, onClick = {
                     val text = recording.transcription.ifBlank { "VoiceMemo: ${recording.title}" }
                     val intent = Intent(Intent.ACTION_SEND).apply { putExtra(Intent.EXTRA_TEXT, text); type = "text/plain" }
                     context.startActivity(Intent.createChooser(intent, null))
-                }
+                }, glowColor = VMNeonPurple, modifier = Modifier.weight(1f))
             }
             Spacer(Modifier.height(8.dp))
-            VMGlowButton("Share Audio File", Icons.Default.Audiotrack, glowColor = VMPrimary, modifier = Modifier.fillMaxWidth()) {
+            VMGlowButton("Share Audio File", Icons.Default.Audiotrack, onClick = {
                 try {
                     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(recording.filePath))
                     val intent = Intent(Intent.ACTION_SEND).apply { putExtra(Intent.EXTRA_STREAM, uri); type = "audio/*"; addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
                     context.startActivity(Intent.createChooser(intent, "Share Audio"))
                 } catch (e: Exception) { viewModel.showToast("File not available") }
-            }
+            }, glowColor = VMPrimary, modifier = Modifier.fillMaxWidth())
             Spacer(Modifier.height(32.dp))
         }
 
         // Bottom bar
         Surface(Modifier.fillMaxWidth(), color = VMSurface, tonalElevation = 8.dp) {
             Row(Modifier.fillMaxWidth().padding(16.dp).navigationBarsPadding(), Arrangement.SpaceEvenly) {
-                VMGlowButton("Play Audio", Icons.Default.PlayArrow, glowColor = VMNeonGreen) {
+                VMGlowButton("Play Audio", Icons.Default.PlayArrow, onClick = {
                     try { val intent = Intent(Intent.ACTION_VIEW).apply { setDataAndType(FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", File(recording.filePath)), "audio/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }; context.startActivity(intent) }
                     catch (e: Exception) { viewModel.showToast("Cannot play file") }
-                }
-                VMGlowButton("Delete", Icons.Default.Delete, glowColor = VMError) { viewModel.deleteRecording(recording); onNavigateBack() }
+                }, glowColor = VMNeonGreen)
+                VMGlowButton("Delete", Icons.Default.Delete, onClick = { viewModel.deleteRecording(recording); onNavigateBack() }, glowColor = VMError)
             }
         }
     }
