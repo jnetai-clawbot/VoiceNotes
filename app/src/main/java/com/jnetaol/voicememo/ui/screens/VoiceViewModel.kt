@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.*
 import com.jnetaol.voicememo.data.db.VoiceDatabase
@@ -60,6 +61,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     fun startRecording() {
         if (ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             showToast("Microphone permission required")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 34 && ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.FOREGROUND_SERVICE_MICROPHONE) != PackageManager.PERMISSION_GRANTED) {
+            showToast("Foreground service permission required")
             return
         }
         try {
