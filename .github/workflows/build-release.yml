@@ -20,8 +20,6 @@ jobs:
         with: {java-version: '17', distribution: 'temurin', cache: gradle}
       - uses: gradle/actions/setup-gradle@v3
       - run: chmod +x gradlew
-      - run: |
-          keytool -genkey -v -keystore keystore.jks -alias voicememo -keyalg RSA -keysize 2048 -validity 10000 -storepass changeit -keypass changeit -dname "CN=VoiceMemo, O=jnetaol, C=UK" 2>/dev/null || true
       - name: Determine Version
         id: version
         run: |
