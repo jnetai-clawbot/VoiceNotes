@@ -169,6 +169,18 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
         _recordingTime.value = 0L
     }
 
+    fun updateTranscription(id: Long, text: String) {
+        scope.launch(Dispatchers.IO) {
+            try {
+                db.recordingDao().updateTranscription(id, text)
+                loadRecordings()
+                showToast("Transcription saved")
+            } catch (e: Exception) {
+                showToast("Transcribe error: ${e.message}")
+            }
+        }
+    }
+
     fun deleteRecording(recording: Recording) {
         scope.launch(Dispatchers.IO) {
             try { File(recording.filePath).delete(); db.recordingDao().delete(recording.id); loadRecordings() }
