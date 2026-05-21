@@ -54,10 +54,10 @@ fun SettingsScreen(viewModel: VoiceViewModel, onNavigateBack: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             VMSectionHeader("About")
             VMNeonCard {
-                SettingsRow(Icons.Default.Info, "VoiceMemo v1.0.0", "Offline Voice Notes to Text", onClick = {})
+                SettingsRow(Icons.Default.Info, "VoiceMemo v1.0.1", "Offline Voice Notes to Text", onClick = {})
                 Divider(color = VMSurfaceVariant)
-                SettingsRow(Icons.Default.Language, "Made By jnetaol.com", "Visit our website") {
-                    try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://jnetaol.com"))) } catch (_: Exception) {}
+                SettingsRow(Icons.Default.Language, "Made By jnetai.com", "Visit our website") {
+                    try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://jnetai.com"))) } catch (_: Exception) {}
                 }
                 Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.SystemUpdateAlt, "Check For Updates", "See latest release on GitHub") {
