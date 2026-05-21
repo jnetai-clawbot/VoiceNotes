@@ -18,11 +18,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import android.widget.Toast
 import com.jnetaol.voicememo.data.model.Recording
 import com.jnetaol.voicememo.ui.components.*
 import com.jnetaol.voicememo.ui.screens.VoiceViewModel
@@ -41,6 +43,7 @@ fun HomeScreen(
     val isRecording by viewModel.isRecording.collectAsState()
     val recordingTime by viewModel.recordingTime.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
+    val context = LocalContext.current
 
     Column(Modifier.fillMaxSize().background(VMBackground)) {
         Row(Modifier.fillMaxWidth().padding(16.dp).statusBarsPadding(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -86,8 +89,16 @@ fun HomeScreen(
         if (!isRecording) {
             Surface(Modifier.fillMaxWidth(), color = VMSurface, tonalElevation = 8.dp) {
                 Box(Modifier.fillMaxWidth().padding(24.dp).navigationBarsPadding(), contentAlignment = Alignment.Center) {
-                    Box(Modifier.size(72.dp).shadow(20.dp, CircleShape, ambientColor = VMPrimary.copy(alpha = 0.6f), spotColor = VMPrimary.copy(alpha = 0.6f)).clip(CircleShape).background(Brush.radialGradient(listOf(VMPrimaryVariant, VMPrimary, VMPrimary))), contentAlignment = Alignment.Center) {
-                        IconButton({ viewModel.startRecording() }, Modifier.size(56.dp)) { Icon(Icons.Default.Mic, "Record", tint = VMTextWhite, modifier = Modifier.size(32.dp)) }
+                    FloatingActionButton(
+                        onClick = {
+                            Toast.makeText(context, "Recording...", Toast.LENGTH_SHORT).show()
+                            viewModel.startRecording()
+                        },
+                        containerColor = VMPrimary,
+                        contentColor = VMTextWhite,
+                        modifier = Modifier.size(72.dp)
+                    ) {
+                        Icon(Icons.Default.Mic, "Record", modifier = Modifier.size(32.dp))
                     }
                 }
             }
