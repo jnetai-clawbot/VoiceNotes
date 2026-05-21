@@ -2,14 +2,13 @@ package com.jnetaol.voicememo.ui.screens
 
 import android.Manifest
 import android.app.Application
-import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaRecorder
 import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.*
 import com.jnetaol.voicememo.data.db.VoiceDatabase
 import com.jnetaol.voicememo.data.model.Recording
-import com.jnetaol.voicememo.engine.RecordingService
 import com.jnetaol.voicememo.logger.VoiceLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -19,7 +18,7 @@ import java.util.Date
 
 class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val db = VoiceDatabase.getInstance(application)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val recordingsDir = File(application.filesDir, "recordings").also { if (!it.exists()) it.mkdirs() }
 
     private val _recordings = MutableStateFlow<List<Recording>>(emptyList())
@@ -34,6 +33,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val _toastMessage = MutableSharedFlow<String>()
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
 
+    private var mediaRecorder: MediaRecorder? = null
     private var timerJob: Job? = null
     private var currentRecordingFile: File? = null
 
@@ -43,14 +43,14 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun loadRecordings() {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try { _recordings.value = db.recordingDao().getAll() }
             catch (e: Exception) { VoiceLogger.e("VoiceViewModel", "Load failed", "VM-ERR-001", e) }
         }
     }
 
     fun searchRecordings(query: String) {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try {
                 _recordings.value = if (query.isBlank()) db.recordingDao().getAll()
                 else db.recordingDao().search(query)
@@ -63,120 +63,171 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             showToast("Microphone permission required")
             return
         }
-        if (Build.VERSION.SDK_INT >= 34 && ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.FOREGROUND_SERVICE_MICROPHONE) != PackageManager.PERMISSION_GRANTED) {
-            showToast("Foreground service permission required")
-            return
-        }
+        if (_isRecording.value) return
+
         try {
             val fileName = "voice_${System.currentTimeMillis()}.m4a"
             val file = File(recordingsDir, fileName)
-            val intent = Intent(getApplication(), RecordingService::class.java).apply {
-                action = "START"
-                putExtra("filePath", file.absolutePath)
-            }
-            getApplication<Application>().startForegroundService(intent)
             currentRecordingFile = file
+            val dir = file.parentFile
+            if (dir?.exists() != true) dir?.mkdirs()
+
+            mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                MediaRecorder(getApplication())
+            } else {
+                @Suppress("DEPRECATION")
+                MediaRecorder()
+            }
+
+            mediaRecorder?.apply {
+                setAudioSource(MediaRecorder.AudioSource.MIC)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
+                setAudioEncodingBitRate(96000)
+                setOutputFile(file.absolutePath)
+                prepare()
+                start()
+            }
+
             _isRecording.value = true
-            _recordingTime.value = 0
+            _recordingTime.value = 0L
             timerJob = scope.launch {
                 while (isActive) { delay(1000); _recordingTime.value += 1000 }
             }
+            showToast("Recording started")
             VoiceLogger.d("VoiceViewModel", "Recording started", "VM-002", mapOf("file" to fileName))
         } catch (e: Exception) {
             VoiceLogger.e("VoiceViewModel", "Start recording failed", "VM-ERR-003", e)
-            showToast("Failed to start recording")
+            showToast("Recording failed: ${e.message}")
+            mediaRecorder?.release()
+            mediaRecorder = null
+            currentRecordingFile = null
         }
     }
 
     fun pauseRecording() {
-        val intent = Intent(getApplication(), RecordingService::class.java).apply { action = "PAUSE" }
-        getApplication<Application>().startService(intent)
-        _isRecording.value = false
-        timerJob?.cancel()
-        VoiceLogger.d("VoiceViewModel", "Recording paused at ${_recordingTime.value}ms", "VM-003")
+        try {
+            if (_isRecording.value && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                mediaRecorder?.pause()
+                _isRecording.value = false
+                timerJob?.cancel()
+                VoiceLogger.d("VoiceViewModel", "Recording paused at ${_recordingTime.value}ms", "VM-003")
+            }
+        } catch (e: Exception) {
+            VoiceLogger.e("VoiceViewModel", "Pause failed", "VM-ERR-004", e)
+        }
     }
 
     fun resumeRecording() {
-        val intent = Intent(getApplication(), RecordingService::class.java).apply { action = "RESUME" }
-        getApplication<Application>().startService(intent)
-        _isRecording.value = true
-        timerJob = scope.launch {
-            while (isActive) { delay(1000); _recordingTime.value += 1000 }
+        try {
+            if (!_isRecording.value && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                mediaRecorder?.resume()
+                _isRecording.value = true
+                timerJob = scope.launch {
+                    while (isActive) { delay(1000); _recordingTime.value += 1000 }
+                }
+                VoiceLogger.d("VoiceViewModel", "Recording resumed", "VM-004")
+            }
+        } catch (e: Exception) {
+            VoiceLogger.e("VoiceViewModel", "Resume failed", "VM-ERR-005", e)
         }
-        VoiceLogger.d("VoiceViewModel", "Recording resumed", "VM-004")
     }
 
     fun stopRecording(): Long {
-        val intent = Intent(getApplication(), RecordingService::class.java).apply { action = "STOP" }
-        getApplication<Application>().startService(intent)
-        _isRecording.value = false
-        timerJob?.cancel()
         val duration = _recordingTime.value
-        _recordingTime.value = 0
+        try {
+            mediaRecorder?.apply {
+                try { stop() } catch (_: Exception) {}
+                release()
+            }
+            mediaRecorder = null
+            _isRecording.value = false
+            timerJob?.cancel()
+            _recordingTime.value = 0L
 
-        scope.launch {
-            try {
-                val filePath = currentRecordingFile?.absolutePath ?: ""
-                currentRecordingFile = null
-                val recording = Recording(
-                    title = "Recording ${SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.US).format(Date())}",
-                    filePath = filePath, durationMs = duration,
-                    fileSizeBytes = 1024 * (duration / 100)
-                )
-                db.recordingDao().insert(recording)
-                loadRecordings()
-                VoiceLogger.d("VoiceViewModel", "Recording saved", "VM-005", mapOf("duration" to duration.toString()))
-            } catch (e: Exception) { VoiceLogger.e("VoiceViewModel", "Save failed", "VM-ERR-004", e) }
+            val filePath = currentRecordingFile?.absolutePath ?: ""
+            currentRecordingFile = null
+
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val recording = Recording(
+                        title = "Recording ${SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.US).format(Date())}",
+                        filePath = filePath, durationMs = duration,
+                        fileSizeBytes = if (File(filePath).exists()) File(filePath).length() else 0L
+                    )
+                    db.recordingDao().insert(recording)
+                    loadRecordings()
+                    withContext(Dispatchers.Main) {
+                        showToast("Recording saved")
+                    }
+                    VoiceLogger.d("VoiceViewModel", "Recording saved", "VM-005", mapOf("duration" to duration.toString()))
+                } catch (e: Exception) { VoiceLogger.e("VoiceViewModel", "Save failed", "VM-ERR-006", e) }
+            }
+        } catch (e: Exception) {
+            VoiceLogger.e("VoiceViewModel", "Stop failed", "VM-ERR-007", e)
+            _isRecording.value = false
+            timerJob?.cancel()
+            mediaRecorder?.release()
+            mediaRecorder = null
         }
         return duration
     }
 
     fun cancelRecording() {
-        val intent = Intent(getApplication(), RecordingService::class.java).apply { action = "CANCEL" }
-        getApplication<Application>().startService(intent)
-        currentRecordingFile = null
-        _isRecording.value = false
-        timerJob?.cancel()
-        _recordingTime.value = 0
+        try {
+            mediaRecorder?.apply {
+                try { stop() } catch (_: Exception) {}
+                release()
+            }
+            mediaRecorder = null
+            currentRecordingFile?.delete()
+            currentRecordingFile = null
+            _isRecording.value = false
+            timerJob?.cancel()
+            _recordingTime.value = 0L
+            VoiceLogger.d("VoiceViewModel", "Recording cancelled", "VM-006")
+        } catch (e: Exception) {
+            VoiceLogger.e("VoiceViewModel", "Cancel failed", "VM-ERR-008", e)
+        }
     }
 
     fun deleteRecording(recording: Recording) {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try {
                 File(recording.filePath).delete()
                 db.recordingDao().delete(recording.id)
                 loadRecordings()
-                showToast("Recording deleted")
+                withContext(Dispatchers.Main) { showToast("Recording deleted") }
             } catch (e: Exception) {
-                VoiceLogger.e("VoiceViewModel", "Delete failed", "VM-ERR-005", e)
+                VoiceLogger.e("VoiceViewModel", "Delete failed", "VM-ERR-009", e)
             }
         }
     }
 
     fun deleteAllRecordings() {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try {
                 recordingsDir.listFiles()?.forEach { it.delete() }
                 db.recordingDao().deleteAll()
                 loadRecordings()
-                showToast("All recordings deleted")
+                withContext(Dispatchers.Main) { showToast("All recordings deleted") }
             } catch (e: Exception) {
-                VoiceLogger.e("VoiceViewModel", "Delete all failed", "VM-ERR-006", e)
+                VoiceLogger.e("VoiceViewModel", "Delete all failed", "VM-ERR-010", e)
             }
         }
     }
 
     fun toggleFavorite(id: Long, fav: Boolean) {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try { db.recordingDao().toggleFavorite(id, fav); loadRecordings() }
-            catch (e: Exception) { VoiceLogger.e("VoiceViewModel", "Fav toggle failed", "VM-ERR-007", e) }
+            catch (e: Exception) { VoiceLogger.e("VoiceViewModel", "Fav toggle failed", "VM-ERR-011", e) }
         }
     }
 
     fun updateTags(id: Long, tags: String) {
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             try { db.recordingDao().updateTags(id, tags); loadRecordings() }
-            catch (e: Exception) { VoiceLogger.e("VoiceViewModel", "Tag update failed", "VM-ERR-008", e) }
+            catch (e: Exception) { VoiceLogger.e("VoiceViewModel", "Tag update failed", "VM-ERR-012", e) }
         }
     }
 
@@ -195,5 +246,11 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun showToast(msg: String) { scope.launch { _toastMessage.emit(msg) } }
 
-    override fun onCleared() { super.onCleared(); scope.cancel(); VoiceLogger.d("VoiceViewModel", "Cleared", "VM-006") }
+    override fun onCleared() {
+        super.onCleared()
+        mediaRecorder?.release()
+        mediaRecorder = null
+        scope.cancel()
+        VoiceLogger.d("VoiceViewModel", "Cleared", "VM-006")
+    }
 }

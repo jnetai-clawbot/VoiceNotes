@@ -1,6 +1,3 @@
--keep class com.jnetaol.voicememo.engine.RecordingService { *; }
--keep class com.jnetaol.voicememo.engine.RecordingService$Companion { *; }
--keepclassmembers class com.jnetaol.voicememo.engine.RecordingService { *; }
 -keep class com.jnetaol.voicememo.ui.screens.VoiceViewModel { *; }
 -keep class com.jnetaol.voicememo.data.model.Recording { *; }
 -keep class com.jnetaol.voicememo.ui.screens.home.HomeScreenKt { *; }

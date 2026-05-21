@@ -21,7 +21,6 @@ class MainActivity : ComponentActivity() {
     private val permissions = buildList {
         add(Manifest.permission.RECORD_AUDIO)
         if (Build.VERSION.SDK_INT >= 33) add(Manifest.permission.POST_NOTIFICATIONS)
-        if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.FOREGROUND_SERVICE_MICROPHONE)
     }
 
     private val requestPermissionLauncher = registerForActivityResult(
