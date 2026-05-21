@@ -79,7 +79,7 @@ fun HomeScreen(
         }
 
         if (recordings.isEmpty()) {
-            VMEmptyState(Icons.Default.Mic, "No Recordings", "Tap the mic to start recording")
+            VMEmptyState(Icons.Default.Mic, "No Recordings", "Tap the mic to start recording", Modifier.weight(1f))
         } else {
             LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(recordings, key = { it.id }) { recording -> RecordingCard(recording, onClick = { onNavigateToRecording(recording.id) }, onDelete = { viewModel.deleteRecording(recording) }, onToggleFavorite = { viewModel.toggleFavorite(recording.id, !recording.isFavorite) }) }
