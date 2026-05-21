@@ -31,6 +31,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
 
     private var timerJob: Job? = null
+    private var currentRecordingFile: File? = null
 
     init {
         VoiceLogger.d("VoiceViewModel", "ViewModel init", "VM-001")
@@ -62,6 +63,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                 putExtra("filePath", file.absolutePath)
             }
             getApplication<Application>().startForegroundService(intent)
+            currentRecordingFile = file
             _isRecording.value = true
             _recordingTime.value = 0
             timerJob = scope.launch {
@@ -102,7 +104,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
         scope.launch {
             try {
-                val filePath = File(recordingsDir, "voice_${System.currentTimeMillis() - duration}.m4a").absolutePath
+                val filePath = currentRecordingFile?.absolutePath ?: ""
+                currentRecordingFile = null
                 val recording = Recording(
                     title = "Recording ${SimpleDateFormat("MMM dd, HH:mm", java.util.Locale.US).format(Date())}",
                     filePath = filePath, durationMs = duration,
@@ -119,6 +122,7 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelRecording() {
         val intent = Intent(getApplication(), RecordingService::class.java).apply { action = "CANCEL" }
         getApplication<Application>().startService(intent)
+        currentRecordingFile = null
         _isRecording.value = false
         timerJob?.cancel()
         _recordingTime.value = 0
