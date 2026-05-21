@@ -1,7 +1,10 @@
 package com.jnetaol.voicememo.ui.screens
 
+import android.Manifest
 import android.app.Application
 import android.content.Intent
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.*
 import com.jnetaol.voicememo.data.db.VoiceDatabase
 import com.jnetaol.voicememo.data.model.Recording
@@ -55,6 +58,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startRecording() {
+        if (ContextCompat.checkSelfPermission(getApplication(), Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            showToast("Microphone permission required")
+            return
+        }
         try {
             val fileName = "voice_${System.currentTimeMillis()}.m4a"
             val file = File(recordingsDir, fileName)

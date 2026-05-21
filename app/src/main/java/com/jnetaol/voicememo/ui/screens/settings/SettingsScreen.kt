@@ -54,18 +54,18 @@ fun SettingsScreen(viewModel: VoiceViewModel, onNavigateBack: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             VMSectionHeader("About")
             VMNeonCard {
-                SettingsRow(Icons.Default.Info, "VoiceMemo v1.0.2", "Offline Voice Notes to Text", onClick = {})
+                SettingsRow(Icons.Default.Info, "VoiceMemo v1.0.3", "Offline Voice Notes to Text", onClick = {})
                 Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.Language, "Made By jnetai.com", "Visit our website") {
                     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://jnetai.com"))) } catch (_: Exception) {}
                 }
                 Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.SystemUpdateAlt, "Check For Updates", "See latest release on GitHub") {
-                    try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jnetaol/voicememo/releases"))) } catch (_: Exception) {}
+                        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jnetai-clawbot/VoiceNotes/releases"))) } catch (_: Exception) {}
                 }
                 Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.Share, "Share App", "Share latest release link") {
-                    val intent = Intent(Intent.ACTION_SEND).apply { putExtra(Intent.EXTRA_TEXT, "Check out VoiceMemo: https://github.com/jnetaol/voicememo/releases"); type = "text/plain" }
+                    val intent = Intent(Intent.ACTION_SEND).apply {                         putExtra(Intent.EXTRA_TEXT, "Check out VoiceMemo: https://github.com/jnetai-clawbot/VoiceNotes/releases"); type = "text/plain" }
                     context.startActivity(Intent.createChooser(intent, "Share"))
                 }
             }

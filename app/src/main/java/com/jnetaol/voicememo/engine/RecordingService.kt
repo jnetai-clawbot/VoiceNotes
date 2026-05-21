@@ -10,6 +10,7 @@ import android.content.Intent
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.jnetaol.voicememo.MainActivity
 import com.jnetaol.voicememo.logger.VoiceLogger
@@ -65,20 +66,24 @@ class RecordingService : Service() {
                 setAudioSource(MediaRecorder.AudioSource.MIC)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(44100)
                 setAudioEncodingBitRate(96000)
                 setOutputFile(outputFile!!.absolutePath)
-                prepare()
-                start()
             }
 
             isRecording = true
             startTime = System.currentTimeMillis()
             startForeground(NOTIFICATION_ID, createNotification())
+
+            mediaRecorder?.prepare()
+            mediaRecorder?.start()
+
             VoiceLogger.d("RecordingService", "Recording started", "VM-SVC-002", mapOf(
                 "path" to filePath))
         } catch (e: Exception) {
             VoiceLogger.e("RecordingService", "Start failed", "VM-SVC-ERR-001", e)
+            android.os.Handler(mainLooper).post {
+                Toast.makeText(this@RecordingService, "Recording failed: ${e.message}", Toast.LENGTH_LONG).show()
+            }
             stopSelf()
         }
     }
