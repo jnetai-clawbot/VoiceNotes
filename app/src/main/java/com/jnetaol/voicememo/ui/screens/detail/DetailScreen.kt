@@ -141,19 +141,24 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
     installSuggestion?.let { message ->
         AlertDialog(
             onDismissRequest = { viewModel.dismissInstallSuggestion() },
-            title = { Text("Install speech service", color = VMTextWhite) },
+            title = { Text("Transcription needs setup", color = VMTextWhite) },
             text = { Text(message, color = VMTextSecondary) },
             confirmButton = {
                 TextButton({
                     viewModel.dismissInstallSuggestion()
+                    val speechSettings = Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS)
                     try {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=google+mobile+speech+service")))
+                        context.startActivity(speechSettings)
                     } catch (_: Exception) {
                         try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/search?q=google%20speech%20services")))
-                        } catch (_: Exception) {}
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.tts")))
+                        } catch (_: Exception) {
+                            try {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.tts")))
+                            } catch (_: Exception) {}
+                        }
                     }
-                }) { Text("Install", color = VMSecondary, fontWeight = FontWeight.Bold) }
+                }) { Text("Fix", color = VMSecondary, fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton({ viewModel.dismissInstallSuggestion() }) { Text("Later", color = VMTextSecondary) } },
             containerColor = VMSurface

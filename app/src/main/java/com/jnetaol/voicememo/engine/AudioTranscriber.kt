@@ -79,14 +79,9 @@ class AudioTranscriber(private val context: Context) {
         return connectivity.activeNetwork != null
     }
 
-    // Tier 2 (offline, local) then Tier 3 (mic playback, online).
+    // Tier 2 (offline, local on the phone's installed speech service) then Tier 3 (mic playback, online).
     private fun attemptOfflineThenPlayback(filePath: String, language: String, callback: Callback, tier1Note: String) {
         attemptPlaybackListen(filePath, language, callback, offline = true) { offlineNote ->
-            if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-                callback.onInstallSuggestion(
-                    "A speech recognition service is not installed on this device. Install \"Google Speech Services\" (or run the 'Hey Google'/voice typing setup) so it can transcribe locally on the phone."
-                )
-            }
             mainHandler.postDelayed({
                 attemptPlaybackListen(filePath, language, callback, offline = false) { finalNote ->
                     callback.onError("$tier1Note; offline: $offlineNote; playback: $finalNote")
@@ -168,14 +163,11 @@ class AudioTranscriber(private val context: Context) {
         onFail: (String) -> Unit
     ) {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            callback.onInstallSuggestion(
+                "No speech recognition service is available on this phone. If you already have Google's \"Speech Recognition & Synthesis\" app, open it / re-enable its speech service (or go to Settings \u2192 Languages & input \u2192 Speech). VoiceMemo must not be silenced in work-profile settings."
+            )
             onFail("speech recognition service not available")
             return
-        }
-
-        if (offline) {
-            callback.onInstallSuggestion(
-                "If offline voice data for '${language}' is not downloaded, transcription may fail. You can download it in Settings \u2192 System \u2192 Languages & input \u2192 Speech, or via the Google app voice settings."
-            )
         }
 
         try {
@@ -277,7 +269,7 @@ class AudioTranscriber(private val context: Context) {
                 }
                 if (offline && (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)) {
                     callback.onInstallSuggestion(
-                        "Your phone has no offline voice data installed for backup/local transcription. Download the offline language pack (Settings \u2192 Languages & input \u2192 Speech, or Google app voice settings), or an offline speech app from the Play Store."
+                        "The offline (local) transcription failed because Google's speech service has no voice data downloaded for '$language'. Open Speech settings (Languages & input \u2192 Speech) and download the offline language pack."
                     )
                 }
                 failNow(errorMessage(error, offline))
