@@ -35,10 +35,13 @@ class AudioTranscriber(private val context: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Embedded API key used by Google's own browser speech input; lets us POST audio
-    // straight to the same free recognition backend that SpeechRecognizer uses.
-    private val GOOGLE_SPEECH_KEY = "AIzaSyBOti4mM-6x9WDnZIjIyrEU_OpHqDPBBLw"
-    private val GOOGLE_SPEECH_URL = "https://www.google.com/speech-api/v2/recognize"
+// Public keys used by Google's own browser speech input; let us POST audio straight
+// to the same free recognition backend. First is the actively-working one.
+private val GOOGLE_SPEECH_KEYS = listOf(
+    "AIzaSyBOti4mM-6x9WDnZIjIeyEU21OpBXqWBgw",
+    "AIzaSyBOti4mM-6x9WDnZIjIyrEU_OpHqDPBBLw"
+)
+private val GOOGLE_SPEECH_URL = "https://www.google.com/speech-api/v2/recognize"
 
     fun transcribe(filePath: String, language: String? = null, callback: Callback) {
         val lang = language?.ifBlank { null } ?: "en"
@@ -97,40 +100,44 @@ class AudioTranscriber(private val context: Context) {
             onFailure("could not decode audio")
             return
         }
-        try {
-            val url = "$GOOGLE_SPEECH_URL?output=json&lang=${URLEncoder.encode(language, "UTF-8")}&key=$GOOGLE_SPEECH_KEY&client=chromium&maxresults=1&pfilter=0"
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 30_000
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "audio/l16; rate=16000")
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Safari/537.36")
-            conn.outputStream.use { it.write(pcm) }
-            val code = conn.responseCode
-            val body = if (code in 200..299) {
-                conn.inputStream.bufferedReader().use { it.readText() }
-            } else {
-                try { conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "" } catch (_: Exception) { "" }
-            }
-            conn.disconnect()
-            if (code != 200) {
-                VoiceLogger.e("Transcriber", "Google direct HTTP error", "VM-TRANS-ERR-007", null, mapOf("code" to code.toString()))
-                onFailure("HTTP $code")
-                return
-            }
-            val text = extractTranscript(body)
-            if (text.isNotBlank()) {
-                VoiceLogger.d("Transcriber", "Google direct OK", "VM-TRANS-007")
-                onSuccess(text)
-            } else {
+        var lastError = "could not reach Google"
+        for (key in GOOGLE_SPEECH_KEYS) {
+            try {
+                val url = "$GOOGLE_SPEECH_URL?client=chromium&lang=${URLEncoder.encode(language, "UTF-8")}&key=$key&pFilter=0"
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 30_000
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "audio/l16; rate=16000")
+                conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 9) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36")
+                conn.outputStream.use { it.write(pcm) }
+                val code = conn.responseCode
+                val body = if (code in 200..299) {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    try { conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "" } catch (_: Exception) { "" }
+                }
+                conn.disconnect()
+                if (code != 200) {
+                    lastError = "HTTP $code"
+                    VoiceLogger.e("Transcriber", "Google direct HTTP error", "VM-TRANS-ERR-007", null, mapOf("code" to code.toString()))
+                    continue
+                }
+                val text = extractTranscript(body)
+                if (text.isNotBlank()) {
+                    VoiceLogger.d("Transcriber", "Google direct OK", "VM-TRANS-007")
+                    onSuccess(text)
+                    return
+                }
+                lastError = "returned no text"
                 VoiceLogger.w("Transcriber", "Google direct returned no text", "VM-TRANS-WARN-006")
-                onFailure("returned no text")
+            } catch (e: Exception) {
+                lastError = "network error ${e.message}"
+                VoiceLogger.e("Transcriber", "Google direct failed", "VM-TRANS-ERR-008", e)
             }
-        } catch (e: Exception) {
-            VoiceLogger.e("Transcriber", "Google direct failed", "VM-TRANS-ERR-008", e)
-            onFailure("network error ${e.message}")
         }
+        onFailure(lastError)
     }
 
     private fun extractTranscript(response: String): String {
@@ -164,7 +171,7 @@ class AudioTranscriber(private val context: Context) {
     ) {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             callback.onInstallSuggestion(
-                "No speech recognition service is available on this phone. If you already have Google's \"Speech Recognition & Synthesis\" app, open it / re-enable its speech service (or go to Settings \u2192 Languages & input \u2192 Speech). VoiceMemo must not be silenced in work-profile settings."
+                "No speech recognition service is available on this phone. Enable/restore your Google speech services (or use online transcription which needs no extra app)."
             )
             onFail("speech recognition service not available")
             return
@@ -266,11 +273,6 @@ class AudioTranscriber(private val context: Context) {
                         attemptPlaybackListen(filePath, language, callback, offline, onFail)
                     }, 900)
                     return
-                }
-                if (offline && (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)) {
-                    callback.onInstallSuggestion(
-                        "Local (offline) transcription needs voice data for '$language'. Tap Fix to open Google's \"Speech Recognition & Synthesis\" app, then tap $language and \u201cDownload\u201d to install the offline English language pack."
-                    )
                 }
                 failNow(errorMessage(error, offline))
             }
