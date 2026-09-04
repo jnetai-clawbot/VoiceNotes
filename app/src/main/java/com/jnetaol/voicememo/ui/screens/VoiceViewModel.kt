@@ -202,6 +202,10 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
     fun transcribeRecording(id: Long, filePath: String, language: String = "en") {
         if (_processingIds.value.contains(id) || filePath.isBlank()) return
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            showToast("Microphone permission is required for transcription. Grant it in app settings.")
+            return
+        }
         _processingIds.update { it + id }
         showToast("Transcribing...")
         scope.launch(Dispatchers.IO) {
