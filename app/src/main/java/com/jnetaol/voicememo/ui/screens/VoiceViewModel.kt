@@ -53,6 +53,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val _transcriptionStatus = MutableStateFlow<String?>(null)
     val transcriptionStatus: StateFlow<String?> = _transcriptionStatus.asStateFlow()
 
+    private val _installSuggestion = MutableStateFlow<String?>(null)
+    val installSuggestion: StateFlow<String?> = _installSuggestion.asStateFlow()
+
     private val _updateCheck = MutableStateFlow<UpdateCheckState>(UpdateCheckState.Idle)
     val updateCheck: StateFlow<UpdateCheckState> = _updateCheck.asStateFlow()
 
@@ -229,8 +232,16 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
                     _transcriptionStatus.value = "Transcription failed: $message"
                     showToast("Transcription failed")
                 }
+
+                override fun onInstallSuggestion(message: String) {
+                    _installSuggestion.value = message
+                }
             })
         }
+    }
+
+    fun dismissInstallSuggestion() {
+        _installSuggestion.value = null
     }
 
     fun checkForUpdates() {

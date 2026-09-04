@@ -1,6 +1,7 @@
 package com.jnetaol.voicememo.ui.screens.detail
 
 import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +37,7 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
     val recording = recordings.find { it.id == recordingId }
     val processingIds by viewModel.processingIds.collectAsState()
     val transcriptionStatus by viewModel.transcriptionStatus.collectAsState()
+    val installSuggestion by viewModel.installSuggestion.collectAsState()
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -96,7 +98,7 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
             )
             Spacer(Modifier.height(8.dp))
             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = VMCard)) {
-                Text(recording.transcription.ifBlank { "No transcription yet. Tap Transcribe (requires internet) to convert this recording to text - it may briefly play the clip out loud on some devices." }, color = if (recording.transcription.isBlank()) VMTextMuted else VMTextPrimary, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(16.dp))
+                Text(recording.transcription.ifBlank { "No transcription yet. Tap Transcribe to convert this recording to text (tries Google directly, then offline, then speaker playback)." }, color = if (recording.transcription.isBlank()) VMTextMuted else VMTextPrimary, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(16.dp))
             }
             Spacer(Modifier.height(8.dp))
             if (transcriptionStatus != null) {
@@ -134,6 +136,28 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
                 VMGlowButton("Delete", Icons.Default.Delete, onClick = { viewModel.deleteRecording(recording); onNavigateBack() }, glowColor = VMError)
             }
         }
+    }
+
+    installSuggestion?.let { message ->
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissInstallSuggestion() },
+            title = { Text("Install speech service", color = VMTextWhite) },
+            text = { Text(message, color = VMTextSecondary) },
+            confirmButton = {
+                TextButton({
+                    viewModel.dismissInstallSuggestion()
+                    try {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://search?q=google+mobile+speech+service")))
+                    } catch (_: Exception) {
+                        try {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/search?q=google%20speech%20services")))
+                        } catch (_: Exception) {}
+                    }
+                }) { Text("Install", color = VMSecondary, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton({ viewModel.dismissInstallSuggestion() }) { Text("Later", color = VMTextSecondary) } },
+            containerColor = VMSurface
+        )
     }
 }
 
