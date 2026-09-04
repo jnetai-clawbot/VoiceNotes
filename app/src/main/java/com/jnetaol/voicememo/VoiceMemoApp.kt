@@ -7,7 +7,7 @@ class VoiceMemoApp : Application() {
     override fun onCreate() {
         super.onCreate()
         VoiceLogger.init(this)
-        VoiceLogger.i("VoiceMemoApp", "App started", "VM-APP-001", mapOf("version" to "1.0.1"))
+        VoiceLogger.i("VoiceMemoApp", "App started", "VM-APP-001", mapOf("version" to BuildConfig.VERSION_NAME))
     }
     override fun onTerminate() { VoiceLogger.i("VoiceMemoApp", "Terminating", "VM-APP-002"); VoiceLogger.shutdown(); super.onTerminate() }
 }

@@ -1,0 +1,14 @@
+# Gradle
+.gradle/
+build/
+*/build/
+!.idea/
+
+# Local configuration (SDK paths etc.)
+local.properties
+
+# Keystore
+*.jks
+
+# OS
+.DS_Store

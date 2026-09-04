@@ -18,7 +18,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jnetaol.voicememo.BuildConfig
 import com.jnetaol.voicememo.ui.components.*
+import com.jnetaol.voicememo.ui.screens.UpdateCheckState
 import com.jnetaol.voicememo.ui.screens.VoiceViewModel
 import com.jnetaol.voicememo.ui.theme.*
 
@@ -27,6 +29,16 @@ import com.jnetaol.voicememo.ui.theme.*
 fun SettingsScreen(viewModel: VoiceViewModel, onNavigateBack: () -> Unit) {
     val context = LocalContext.current
     var showDeleteConfirmation by remember { mutableStateOf(false) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var latestReleaseUrl by remember { mutableStateOf<String?>(null) }
+    val updateCheck by viewModel.updateCheck.collectAsState()
+
+    LaunchedEffect(updateCheck) {
+        if (updateCheck is UpdateCheckState.UpdateAvailable) {
+            latestReleaseUrl = (updateCheck as UpdateCheckState.UpdateAvailable).url
+            showUpdateDialog = true
+        }
+    }
 
     Column(Modifier.fillMaxSize().background(VMBackground)) {
         Row(Modifier.fillMaxWidth().padding(16.dp).statusBarsPadding(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
@@ -54,15 +66,19 @@ fun SettingsScreen(viewModel: VoiceViewModel, onNavigateBack: () -> Unit) {
             Spacer(Modifier.height(16.dp))
             VMSectionHeader("About")
             VMNeonCard {
-                SettingsRow(Icons.Default.Info, "VoiceMemo v1.1.1", "Offline Voice Notes to Text", onClick = {})
+                SettingsRow(Icons.Default.Info, "VoiceMemo v${BuildConfig.VERSION_NAME}", "Offline Voice Notes to Text", onClick = {})
                 Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.Language, "Made By jnetai.com", "Visit our website") {
                     try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://jnetai.com"))) } catch (_: Exception) {}
                 }
                 Divider(color = VMSurfaceVariant)
-                SettingsRow(Icons.Default.SystemUpdateAlt, "Check For Updates", "See latest release on GitHub") {
-                        try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/jnetai-clawbot/VoiceNotes/releases"))) } catch (_: Exception) {}
-                }
+                SettingsRow(Icons.Default.SystemUpdateAlt, "Check For Updates", when (val s = updateCheck) {
+                    is UpdateCheckState.Checking -> "Checking for updates..."
+                    is UpdateCheckState.UpdateAvailable -> "Update available: v${s.latestVersion}"
+                    is UpdateCheckState.UpToDate -> "You're up to date (v${s.latestVersion})"
+                    is UpdateCheckState.Error -> "Check failed - tap to retry"
+                    UpdateCheckState.Idle -> "Check for a newer version on GitHub"
+                }, onClick = { viewModel.checkForUpdates() })
                 Divider(color = VMSurfaceVariant)
                 SettingsRow(Icons.Default.Share, "Share App", "Share latest release link") {
                     val intent = Intent(Intent.ACTION_SEND).apply {                         putExtra(Intent.EXTRA_TEXT, "Check out VoiceMemo: https://github.com/jnetai-clawbot/VoiceNotes/releases"); type = "text/plain" }
@@ -79,6 +95,19 @@ fun SettingsScreen(viewModel: VoiceViewModel, onNavigateBack: () -> Unit) {
             text = { Text("This permanently deletes all recordings and transcriptions.", color = VMTextSecondary) },
             confirmButton = { TextButton({ viewModel.deleteAllRecordings(); showDeleteConfirmation = false }) { Text("Delete All", color = VMError, fontWeight = FontWeight.Bold) } },
             dismissButton = { TextButton({ showDeleteConfirmation = false }) { Text("Cancel", color = VMTextSecondary) } },
+            containerColor = VMSurface)
+    }
+
+    if (showUpdateDialog) {
+        val url = latestReleaseUrl ?: "https://github.com/jnetai-clawbot/VoiceNotes/releases/latest"
+        AlertDialog(onDismissRequest = { showUpdateDialog = false },
+            title = { Text("Update Available", color = VMTextWhite) },
+            text = { Text("A new version of VoiceMemo is available. Update now?", color = VMTextSecondary) },
+            confirmButton = { TextButton({
+                showUpdateDialog = false
+                try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) } catch (_: Exception) {}
+            }) { Text("Update", color = VMSecondary, fontWeight = FontWeight.Bold) } },
+            dismissButton = { TextButton({ showUpdateDialog = false }) { Text("Later", color = VMTextSecondary) } },
             containerColor = VMSurface)
     }
 }

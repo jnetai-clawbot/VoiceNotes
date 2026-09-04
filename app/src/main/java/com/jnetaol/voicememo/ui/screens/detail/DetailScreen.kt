@@ -34,10 +34,13 @@ import java.util.Locale
 fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: () -> Unit) {
     val recordings by viewModel.recordings.collectAsState()
     val recording = recordings.find { it.id == recordingId }
+    val processingIds by viewModel.processingIds.collectAsState()
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
     if (recording == null) { Box(Modifier.fillMaxSize().background(VMBackground), contentAlignment = Alignment.Center) { CircularProgressIndicator(color = VMPrimary) }; return }
+
+    val isProcessing = recording.id in processingIds
 
     var isEditingTags by remember { mutableStateOf(false) }
     var tagText by remember { mutableStateOf(recording.tags) }
@@ -82,8 +85,17 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
 
             // Transcription
             Spacer(Modifier.height(16.dp)); VMSectionHeader("Transcription")
+            VMGlowButton(
+                text = if (isProcessing) "Transcribing..." else "Transcribe",
+                icon = if (isProcessing) Icons.Default.AccessTime else Icons.Default.GraphicEq,
+                onClick = { viewModel.transcribeRecording(recording.id, recording.filePath, recording.language) },
+                enabled = !isProcessing,
+                glowColor = VMSecondary,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = VMCard)) {
-                Text(recording.transcription.ifBlank { "No transcription available yet. Press play to hear the recording, then transcribe." }, color = if (recording.transcription.isBlank()) VMTextMuted else VMTextPrimary, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(16.dp))
+                Text(recording.transcription.ifBlank { "No transcription yet. Tap Transcribe (requires internet) to convert this recording to text with Google." }, color = if (recording.transcription.isBlank()) VMTextMuted else VMTextPrimary, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(16.dp))
             }
 
             // Export
