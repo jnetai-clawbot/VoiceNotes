@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
@@ -37,24 +38,9 @@ class AudioTranscriber(private val context: Context) {
             mainHandler.post { callback.onError("No internet connection. Connect to the internet to use Google transcription.") }
             return
         }
-
-        val pcmFile = try {
-            decodeToPcm(filePath)
-        } catch (e: Exception) {
-            VoiceLogger.e("Transcriber", "Decode failed", "VM-TRANS-ERR-001", e)
-            mainHandler.post { callback.onError("Could not decode audio: ${e.message}") }
-            return
-        }
-
-        val pfd = try {
-            ParcelFileDescriptor.open(pcmFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        } catch (e: Exception) {
-            pcmFile.delete()
-            mainHandler.post { callback.onError("Could not open audio: ${e.message}") }
-            return
-        }
-
-        mainHandler.post { attemptFileRecognition(filePath, lang, pfd, pcmFile, callback, 1) }
+        // Speaker playback is the most reliable path on devices whose recognizer
+        // ignores EXTRA_AUDIO_SOURCE, so try it first with a fresh recognizer.
+        mainHandler.post { attemptSpeakerPlayback(filePath, lang, callback, 1) }
     }
 
     private fun isOnline(): Boolean {
@@ -62,20 +48,163 @@ class AudioTranscriber(private val context: Context) {
         return connectivity.activeNetwork != null
     }
 
-    // File-input attempt (Google recognizers that support EXTRA_AUDIO_SOURCE transcribe silently).
-    // On devices that ignore it, we hand over to speaker playback after a delay so the recognizer
-    // session from this attempt is fully torn down first.
+    // -------- Attempt 1: play the clip out loud while the recognizer listens on the mic --------
+
+    private fun attemptSpeakerPlayback(filePath: String, language: String, callback: Callback, attempt: Int) {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            callback.onError("Speech recognition is not available on this device")
+            return
+        }
+
+        // Make sure we play loudly through the speaker so the mic can hear it.
+        try {
+            val am = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+            am.isSpeakerphoneOn = true
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC), 0)
+        } catch (_: Exception) {}
+
+        val player = try {
+            MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                setDataSource(filePath)
+                prepare()
+                setVolume(1f, 1f)
+            }
+        } catch (e: Exception) {
+            VoiceLogger.e("Transcriber", "MediaPlayer prepare failed", "VM-TRANS-ERR-003", e)
+            callback.onError("Could not play audio for transcription: ${e.message}")
+            return
+        }
+
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+        }
+
+        var settled = false
+        var playerStarted = false
+        var fallbackInvoked = false
+
+        fun releasePlayback() {
+            if (!settled) settled = true
+            try { player.stop() } catch (_: Exception) {}
+            try { player.release() } catch (_: Exception) {}
+            try { recognizer.cancel() } catch (_: Exception) {}
+            try { recognizer.destroy() } catch (_: Exception) {}
+        }
+
+        fun fallbackToFile(why: String) {
+            if (fallbackInvoked) return
+            fallbackInvoked = true
+            releasePlayback()
+            attemptFileFromBackground(filePath, language, why, callback)
+        }
+
+        val listener = object : RecognitionListener {
+            override fun onBeginningOfSpeech() {}
+            override fun onBufferReceived(bytes: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onReadyForSpeech(params: Bundle?) {
+                if (playerStarted || settled) return
+                playerStarted = true
+                VoiceLogger.d("Transcriber", "Playing audio for recognition", "VM-TRANS-004")
+                try {
+                    player.setOnCompletionListener { mp ->
+                        try { recognizer.stopListening() } catch (_: Exception) {}
+                    }
+                    player.start()
+                } catch (e: Exception) {
+                    if (!settled) {
+                        fallbackToFile("could not start playback (${e.message})")
+                    }
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+
+            override fun onResults(results: Bundle?) {
+                if (settled) return
+                settled = true
+                val text = results?.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
+                releasePlayback()
+                if (text.isNotBlank()) {
+                    VoiceLogger.d("Transcriber", "Speaker transcription ready", "VM-TRANS-005")
+                    callback.onResult(text)
+                } else {
+                    fallbackToFile("speech playback heard nothing")
+                }
+            }
+
+            override fun onError(error: Int) {
+                if (settled) return
+                if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY && attempt < 2) {
+                    VoiceLogger.w("Transcriber", "Recognizer busy on playback", "VM-TRANS-WARN-004")
+                    settled = true
+                    releasePlayback()
+                    mainHandler.postDelayed({
+                        attemptSpeakerPlayback(filePath, language, callback, attempt + 1)
+                    }, 900)
+                    return
+                }
+                VoiceLogger.e("Transcriber", "Speaker recognition error", "VM-TRANS-ERR-004", null,
+                    mapOf("code" to error.toString()))
+                fallbackToFile("speech playback error code $error")
+            }
+        }
+
+        recognizer.setRecognitionListener(listener)
+        try {
+            recognizer.startListening(intent)
+        } catch (e: Exception) {
+            if (!settled) {
+                VoiceLogger.e("Transcriber", "Failed to start playback recognition", "VM-TRANS-ERR-006", e)
+                fallbackToFile("could not start playback recognition (${e.message})")
+            }
+        }
+    }
+
+    // -------- Attempt 2: feed the decoded PCM to the recognizer via EXTRA_AUDIO_SOURCE --------
+
+    private fun attemptFileFromBackground(filePath: String, language: String, speakerNote: String, callback: Callback) {
+        Thread {
+            try {
+                val pcmFile = decodeToPcm(filePath)
+                val pfd = try {
+                    ParcelFileDescriptor.open(pcmFile, ParcelFileDescriptor.MODE_READ_ONLY)
+                } catch (e: Exception) {
+                    pcmFile.delete()
+                    mainHandler.post { callback.onError("$speakerNote; direct file input failed to open audio") }
+                    return@Thread
+                }
+                mainHandler.post { attemptFileRecognition(filePath, language, pfd, pcmFile, speakerNote, callback) }
+            } catch (e: Exception) {
+                VoiceLogger.e("Transcriber", "Decode failed", "VM-TRANS-ERR-001", e)
+                mainHandler.post { callback.onError("$speakerNote; direct file input could not decode audio") }
+            }
+        }.start()
+    }
+
     private fun attemptFileRecognition(
         filePath: String,
         language: String,
         pfd: ParcelFileDescriptor,
         pcmFile: File,
-        callback: Callback,
-        attempt: Int
+        speakerNote: String,
+        callback: Callback
     ) {
         if (!SpeechRecognizer.isRecognitionAvailable(context)) {
             releaseSession(null, pfd, pcmFile)
-            callback.onError("Speech recognition is not available on this device")
+            callback.onError("$speakerNote; speech recognition is not available on this device")
             return
         }
 
@@ -110,34 +239,17 @@ class AudioTranscriber(private val context: Context) {
                     VoiceLogger.d("Transcriber", "File transcription ready", "VM-TRANS-002")
                     callback.onResult(text)
                 } else {
-                    VoiceLogger.w("Transcriber", "File input returned empty", "VM-TRANS-WARN-001")
-                    delayToSpeakerFallback(filePath, language, callback)
+                    callback.onError("$speakerNote; direct file input heard nothing")
                 }
             }
 
             override fun onError(error: Int) {
                 if (settled) return
                 settled = true
-                when {
-                    error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY && attempt < 3 -> {
-                        VoiceLogger.w("Transcriber", "Recognizer busy on file attempt", "VM-TRANS-WARN-002")
-                        releaseRecognizerOnly(recognizer)
-                        mainHandler.postDelayed({
-                            attemptFileRecognition(filePath, language, pfd, pcmFile, callback, attempt + 1)
-                        }, 700)
-                    }
-                    error == SpeechRecognizer.ERROR_NO_MATCH || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
-                        VoiceLogger.w("Transcriber", "File recognizer heard nothing, falling back to playback", "VM-TRANS-WARN-003")
-                        releaseSession(recognizer, pfd, pcmFile)
-                        delayToSpeakerFallback(filePath, language, callback)
-                    }
-                    else -> {
-                        VoiceLogger.e("Transcriber", "File recognition error", "VM-TRANS-ERR-002", null,
-                            mapOf("code" to error.toString()))
-                        releaseSession(recognizer, pfd, pcmFile)
-                        callback.onError(errorMessage(error))
-                    }
-                }
+                VoiceLogger.e("Transcriber", "File recognition error", "VM-TRANS-ERR-002", null,
+                    mapOf("code" to error.toString()))
+                releaseSession(recognizer, pfd, pcmFile)
+                callback.onError("$speakerNote; direct file input error code $error")
             }
         }
 
@@ -149,133 +261,9 @@ class AudioTranscriber(private val context: Context) {
                 settled = true
                 releaseSession(recognizer, pfd, pcmFile)
                 VoiceLogger.e("Transcriber", "Failed to start file recognition", "VM-TRANS-ERR-005", e)
-                callback.onError("Could not start recognition: ${e.message}")
+                callback.onError("$speakerNote; direct file input could not start")
             }
         }
-    }
-
-    private fun delayToSpeakerFallback(filePath: String, language: String, callback: Callback) {
-        mainHandler.postDelayed({ attemptSpeakerPlayback(filePath, language, callback, 1) }, 1000)
-    }
-
-    // Speaker playback attempt: plays the clip out loud while the recognizer listens on the mic.
-    // Delayed start avoids the recognizer service being torn down / still busy from a prior session.
-    private fun attemptSpeakerPlayback(filePath: String, language: String, callback: Callback, attempt: Int) {
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            callback.onError("Speech recognition is not available on this device")
-            return
-        }
-
-        val player = try {
-            MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                setDataSource(filePath)
-                prepare()
-                setVolume(1f, 1f)
-            }
-        } catch (e: Exception) {
-            VoiceLogger.e("Transcriber", "MediaPlayer prepare failed", "VM-TRANS-ERR-003", e)
-            callback.onError("Could not play audio for transcription: ${e.message}")
-            return
-        }
-
-        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
-        }
-
-        var settled = false
-        var playerStarted = false
-
-        fun releasePlayback() {
-            if (!settled) settled = true
-            try { player.stop() } catch (_: Exception) {}
-            try { player.release() } catch (_: Exception) {}
-            try { recognizer.cancel() } catch (_: Exception) {}
-            try { recognizer.destroy() } catch (_: Exception) {}
-        }
-
-        val listener = object : RecognitionListener {
-            override fun onBeginningOfSpeech() {}
-            override fun onBufferReceived(bytes: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onReadyForSpeech(params: Bundle?) {
-                if (playerStarted || settled) return
-                playerStarted = true
-                VoiceLogger.d("Transcriber", "Playing audio for recognition", "VM-TRANS-004")
-                try {
-                    player.setOnCompletionListener { mp ->
-                        try { recognizer.stopListening() } catch (_: Exception) {}
-                    }
-                    player.start()
-                } catch (e: Exception) {
-                    if (!settled) {
-                        settled = true
-                        releasePlayback()
-                        callback.onError("Could not play audio: ${e.message}")
-                    }
-                }
-            }
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-
-            override fun onResults(results: Bundle?) {
-                if (settled) return
-                settled = true
-                val text = results?.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
-                releasePlayback()
-                if (text.isNotBlank()) {
-                    VoiceLogger.d("Transcriber", "Speaker transcription ready", "VM-TRANS-005")
-                    callback.onResult(text)
-                } else {
-                    callback.onError(helpfulMessage())
-                }
-            }
-
-            override fun onError(error: Int) {
-                if (settled) return
-                settled = true
-                releasePlayback()
-                if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY && attempt < 2) {
-                    VoiceLogger.w("Transcriber", "Recognizer busy on playback", "VM-TRANS-WARN-004")
-                    mainHandler.postDelayed({
-                        attemptSpeakerPlayback(filePath, language, callback, attempt + 1)
-                    }, 900)
-                } else {
-                    VoiceLogger.e("Transcriber", "Speaker recognition error", "VM-TRANS-ERR-004", null,
-                        mapOf("code" to error.toString()))
-                    callback.onError(errorMessage(error))
-                }
-            }
-        }
-
-        recognizer.setRecognitionListener(listener)
-        try {
-            recognizer.startListening(intent)
-        } catch (e: Exception) {
-            if (!settled) {
-                settled = true
-                releasePlayback()
-                callback.onError("Could not start recognition: ${e.message}")
-            }
-        }
-    }
-
-    private fun helpfulMessage(): String = "No speech recognized. Make sure the microphone permission is enabled and media volume is turned up, then try again."
-
-    private fun releaseRecognizerOnly(recognizer: SpeechRecognizer?) {
-        try { recognizer?.cancel() } catch (_: Exception) {}
-        try { recognizer?.destroy() } catch (_: Exception) {}
     }
 
     private fun releaseSession(recognizer: SpeechRecognizer?, pfd: ParcelFileDescriptor?, pcmFile: File?) {
@@ -442,22 +430,5 @@ class AudioTranscriber(private val context: Context) {
         val bb = ByteBuffer.allocate(out.size * 2).order(ByteOrder.LITTLE_ENDIAN)
         for (s in out) bb.putShort(s)
         return bb.array()
-    }
-
-    private fun errorMessage(error: Int): String = when (error) {
-        SpeechRecognizer.ERROR_AUDIO -> "Audio recording error"
-        SpeechRecognizer.ERROR_CLIENT -> "Client error"
-        SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission is required for transcription. Grant it in app settings and try again."
-        SpeechRecognizer.ERROR_NETWORK -> "Network error while transcribing"
-        SpeechRecognizer.ERROR_NO_MATCH -> "No speech recognized in the recording"
-        SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Recognizer is busy, try again"
-        SpeechRecognizer.ERROR_SERVER -> "Google recognition server error"
-        SpeechRecognizer.ERROR_SERVER_DISCONNECTED -> "Google recognition server disconnected"
-        SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "Recording was too long for one transcription pass"
-        SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED -> "Language not supported"
-        SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE -> "Language model unavailable"
-        SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT -> "Could not check recognition support"
-        SpeechRecognizer.ERROR_TOO_MANY_REQUESTS -> "Too many requests, try again later"
-        else -> "Transcription failed (code $error)"
     }
 }

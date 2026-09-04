@@ -35,6 +35,7 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
     val recordings by viewModel.recordings.collectAsState()
     val recording = recordings.find { it.id == recordingId }
     val processingIds by viewModel.processingIds.collectAsState()
+    val transcriptionStatus by viewModel.transcriptionStatus.collectAsState()
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
 
@@ -96,6 +97,10 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
             Spacer(Modifier.height(8.dp))
             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = VMCard)) {
                 Text(recording.transcription.ifBlank { "No transcription yet. Tap Transcribe (requires internet) to convert this recording to text - it may briefly play the clip out loud on some devices." }, color = if (recording.transcription.isBlank()) VMTextMuted else VMTextPrimary, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(16.dp))
+            }
+            Spacer(Modifier.height(8.dp))
+            if (transcriptionStatus != null) {
+                Text(transcriptionStatus.orEmpty(), color = if (isProcessing) VMPrimary else VMError, fontSize = 12.sp, lineHeight = 18.sp, modifier = Modifier.padding(horizontal = 4.dp))
             }
 
             // Export

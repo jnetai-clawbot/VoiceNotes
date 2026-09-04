@@ -50,6 +50,9 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
     private val _processingIds = MutableStateFlow<Set<Long>>(emptySet())
     val processingIds: StateFlow<Set<Long>> = _processingIds.asStateFlow()
 
+    private val _transcriptionStatus = MutableStateFlow<String?>(null)
+    val transcriptionStatus: StateFlow<String?> = _transcriptionStatus.asStateFlow()
+
     private val _updateCheck = MutableStateFlow<UpdateCheckState>(UpdateCheckState.Idle)
     val updateCheck: StateFlow<UpdateCheckState> = _updateCheck.asStateFlow()
 
@@ -207,11 +210,13 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         _processingIds.update { it + id }
+        _transcriptionStatus.value = "Transcribing\u2026"
         showToast("Transcribing...")
         scope.launch(Dispatchers.IO) {
             AudioTranscriber(app).transcribe(filePath, language, object : AudioTranscriber.Callback {
                 override fun onResult(text: String) {
                     _processingIds.update { it - id }
+                    _transcriptionStatus.value = null
                     scope.launch(Dispatchers.IO) {
                         db.recordingDao().updateTranscription(id, text)
                         loadRecordings()
@@ -221,7 +226,8 @@ class VoiceViewModel(application: Application) : AndroidViewModel(application) {
 
                 override fun onError(message: String) {
                     _processingIds.update { it - id }
-                    showToast(message)
+                    _transcriptionStatus.value = "Transcription failed: $message"
+                    showToast("Transcription failed")
                 }
             })
         }
