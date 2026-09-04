@@ -125,7 +125,7 @@ class AudioTranscriber(private val context: Context) {
         val fmt = outputFormat ?: trackFormat
         val sampleRate = if (fmt.containsKey(MediaFormat.KEY_SAMPLE_RATE)) fmt.getInteger(MediaFormat.KEY_SAMPLE_RATE) else 48000
         val channels = if (fmt.containsKey(MediaFormat.KEY_CHANNEL_COUNT)) fmt.getInteger(MediaFormat.KEY_CHANNEL_COUNT) else 1
-        val encoding = if (fmt.containsKey(MediaFormat.KEY_PCM_ENCODING)) fmt.getInteger(MediaFormat.KEY_PCM_ENCODING) else MediaFormat.ENCODING_PCM_16BIT
+        val encoding = if (fmt.containsKey(MediaFormat.KEY_PCM_ENCODING)) fmt.getInteger(MediaFormat.KEY_PCM_ENCODING) else AudioFormat.ENCODING_PCM_16BIT
 
         val pcm = toPcm16Mono(rawOut.toByteArray(), sampleRate, channels, encoding, 16000)
         val pcmFile = File(context.cacheDir, "vm_pcm_${System.currentTimeMillis()}.raw")
@@ -137,14 +137,14 @@ class AudioTranscriber(private val context: Context) {
 
     private fun toPcm16Mono(raw: ByteArray, sampleRate: Int, channels: Int, encoding: Int, targetRate: Int): ByteArray {
         val frameCount = when (encoding) {
-            MediaFormat.ENCODING_PCM_FLOAT -> raw.size / (4 * channels)
+            AudioFormat.ENCODING_PCM_FLOAT -> raw.size / (4 * channels)
             else -> raw.size / (2 * channels)
         }
         if (frameCount <= 0) return ByteArray(0)
 
         val mono = ShortArray(frameCount)
         when (encoding) {
-            MediaFormat.ENCODING_PCM_FLOAT -> {
+            AudioFormat.ENCODING_PCM_FLOAT -> {
                 val bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN)
                 for (ch in 0 until channels) {
                     for (i in 0 until frameCount) {
