@@ -269,7 +269,7 @@ class AudioTranscriber(private val context: Context) {
                 }
                 if (offline && (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)) {
                     callback.onInstallSuggestion(
-                        "The offline (local) transcription failed because Google's speech service has no voice data downloaded for '$language'. Open Speech settings (Languages & input \u2192 Speech) and download the offline language pack."
+                        "Local (offline) transcription needs voice data for '$language'. Tap Fix to open Google's \"Speech Recognition & Synthesis\" app, then tap $language and \u201cDownload\u201d to install the offline English language pack."
                     )
                 }
                 failNow(errorMessage(error, offline))

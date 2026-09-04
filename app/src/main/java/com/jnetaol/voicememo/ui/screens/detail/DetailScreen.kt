@@ -146,23 +146,31 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
             confirmButton = {
                 TextButton({
                     viewModel.dismissInstallSuggestion()
-                    val speechSettings = Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS)
-                    try {
-                        context.startActivity(speechSettings)
-                    } catch (_: Exception) {
-                        try {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.tts")))
-                        } catch (_: Exception) {
-                            try {
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.tts")))
-                            } catch (_: Exception) {}
-                        }
+                    val speechApp = context.packageManager.getLaunchIntentForPackage("com.google.android.tts")
+                    if (speechApp != null) {
+                        try { context.startActivity(speechApp) } catch (_: Exception) { openSpeechSettings(context) }
+                    } else {
+                        openSpeechSettings(context)
                     }
                 }) { Text("Fix", color = VMSecondary, fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton({ viewModel.dismissInstallSuggestion() }) { Text("Later", color = VMTextSecondary) } },
             containerColor = VMSurface
         )
+    }
+}
+
+private fun openSpeechSettings(context: android.content.Context) {
+    try {
+        context.startActivity(Intent(android.provider.Settings.ACTION_VOICE_INPUT_SETTINGS))
+    } catch (_: Exception) {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=com.google.android.tts")))
+        } catch (_: Exception) {
+            try {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.google.android.tts")))
+            } catch (_: Exception) {}
+        }
     }
 }
 
