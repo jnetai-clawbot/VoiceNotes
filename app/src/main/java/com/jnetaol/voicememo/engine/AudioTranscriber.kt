@@ -116,7 +116,7 @@ class AudioTranscriber(private val context: Context) {
             val body = if (code in 200..299) {
                 conn.inputStream.bufferedReader().use { it.readText() }
             } else {
-                try { conn.errorStream?.bufferedReader()?.use { it.readText() } } catch (_: Exception) { "" }
+                try { conn.errorStream?.bufferedReader()?.use { it.readText() } ?: "" } catch (_: Exception) { "" }
             }
             conn.disconnect()
             if (code != 200) {
