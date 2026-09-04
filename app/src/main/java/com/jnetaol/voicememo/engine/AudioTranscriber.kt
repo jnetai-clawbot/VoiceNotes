@@ -2,10 +2,12 @@ package com.jnetaol.voicememo.engine
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaPlayer
 import android.net.ConnectivityManager
 import android.os.Bundle
 import android.os.Handler
@@ -30,6 +32,12 @@ class AudioTranscriber(private val context: Context) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     fun transcribe(filePath: String, language: String? = null, callback: Callback) {
+        val lang = language?.ifBlank { null } ?: "en"
+        if (!isOnline()) {
+            mainHandler.post { callback.onError("No internet connection. Connect to the internet to use Google transcription.") }
+            return
+        }
+
         val pcmFile = try {
             decodeToPcm(filePath)
         } catch (e: Exception) {
@@ -37,10 +45,194 @@ class AudioTranscriber(private val context: Context) {
             mainHandler.post { callback.onError("Could not decode audio: ${e.message}") }
             return
         }
-        mainHandler.post { startRecognition(pcmFile, language ?: "en", callback) }
+
+        val pfd = try {
+            ParcelFileDescriptor.open(pcmFile, ParcelFileDescriptor.MODE_READ_ONLY)
+        } catch (e: Exception) {
+            pcmFile.delete()
+            mainHandler.post { callback.onError("Could not open audio: ${e.message}") }
+            return
+        }
+
+        mainHandler.post { startFileRecognition(filePath, lang, pfd, pcmFile, callback) }
     }
 
-    private data class DecodedAudio(val bytes: ByteArray, val sampleRate: Int, val channels: Int, val encoding: Int)
+    private fun isOnline(): Boolean {
+        val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        return connectivity.activeNetwork != null
+    }
+
+    private fun startFileRecognition(filePath: String, language: String, pfd: ParcelFileDescriptor, pcmFile: File, callback: Callback) {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            cleanupRecognizer(null, pfd, pcmFile)
+            callback.onError("Speech recognition is not available on this device")
+            return
+        }
+
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pfd)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, 16000)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
+            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+        }
+
+        var attemptedPlayback = false
+
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onBeginningOfSpeech() {}
+            override fun onBufferReceived(bytes: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+
+            override fun onResults(results: Bundle?) {
+                val text = results?.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
+                cleanupRecognizer(recognizer, pfd, pcmFile)
+                if (text.isNotBlank()) {
+                    VoiceLogger.d("Transcriber", "File transcription ready", "VM-TRANS-002")
+                    callback.onResult(text)
+                } else if (!attemptedPlayback) {
+                    VoiceLogger.w("Transcriber", "File input returned empty - retrying via speaker", "VM-TRANS-WARN-001")
+                    startSpeakerPlayback(filePath, language, callback)
+                } else {
+                    callback.onError("No speech recognized in the recording")
+                }
+            }
+
+            override fun onError(error: Int) {
+                cleanupRecognizer(recognizer, pfd, pcmFile)
+                val retriable = error == SpeechRecognizer.ERROR_NO_MATCH ||
+                    error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+                VoiceLogger.e("Transcriber", "File recognition error", "VM-TRANS-ERR-002", null,
+                    mapOf("code" to error.toString(), "retriable" to retriable.toString()))
+                if (retriable && !attemptedPlayback) {
+                    attemptedPlayback = true
+                    VoiceLogger.w("Transcriber", "Retrying via speaker playback", "VM-TRANS-WARN-002")
+                    startSpeakerPlayback(filePath, language, callback)
+                } else {
+                    callback.onError(errorMessage(error))
+                }
+            }
+        })
+
+        try {
+            recognizer.startListening(intent)
+        } catch (e: Exception) {
+            cleanupRecognizer(recognizer, pfd, pcmFile)
+            VoiceLogger.e("Transcriber", "Failed to start recognition", "VM-TRANS-ERR-005", e)
+            callback.onError("Could not start recognition: ${e.message}")
+        }
+    }
+
+    private fun startSpeakerPlayback(filePath: String, language: String, callback: Callback) {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
+            callback.onError("Speech recognition is not available on this device")
+            return
+        }
+
+        val player = try {
+            MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MUSIC)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                setDataSource(filePath)
+                prepare()
+                setVolume(1f, 1f)
+            }
+        } catch (e: Exception) {
+            VoiceLogger.e("Transcriber", "MediaPlayer prepare failed", "VM-TRANS-ERR-003", e)
+            callback.onError("Could not play audio for transcription: ${e.message}")
+            return
+        }
+
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
+        }
+
+        var finished = false
+        var playerStarted = false
+
+        fun finishPlayerCleanup() {
+            if (!finished) {
+                finished = true
+                try { player.stop() } catch (_: Exception) {}
+                try { player.release() } catch (_: Exception) {}
+            }
+        }
+
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onBeginningOfSpeech() {}
+            override fun onBufferReceived(bytes: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onReadyForSpeech(params: Bundle?) {
+                if (!playerStarted) {
+                    playerStarted = true
+                    VoiceLogger.d("Transcriber", "Playing audio for recognition", "VM-TRANS-003")
+                    try {
+                        player.setOnCompletionListener { mp ->
+                            try { recognizer.stopListening() } catch (_: Exception) {}
+                        }
+                        player.start()
+                    } catch (e: Exception) {
+                        finishPlayerCleanup()
+                        callback.onError("Could not play audio: ${e.message}")
+                    }
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {}
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+
+            override fun onResults(results: Bundle?) {
+                val text = results?.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
+                finishPlayerCleanup()
+                try { recognizer.destroy() } catch (_: Exception) {}
+                if (text.isNotBlank()) {
+                    VoiceLogger.d("Transcriber", "Speaker transcription ready", "VM-TRANS-004")
+                    callback.onResult(text)
+                } else {
+                    callback.onError("No speech recognized in the recording")
+                }
+            }
+
+            override fun onError(error: Int) {
+                finishPlayerCleanup()
+                try { recognizer.destroy() } catch (_: Exception) {}
+                VoiceLogger.e("Transcriber", "Speaker recognition error", "VM-TRANS-ERR-004", null, mapOf("code" to error.toString()))
+                callback.onError(errorMessage(error))
+            }
+        })
+
+        try {
+            recognizer.startListening(intent)
+        } catch (e: Exception) {
+            finishPlayerCleanup()
+            try { recognizer.destroy() } catch (_: Exception) {}
+            callback.onError("Could not start recognition: ${e.message}")
+        }
+    }
+
+    private fun cleanupRecognizer(recognizer: SpeechRecognizer?, pfd: ParcelFileDescriptor?, pcmFile: File?) {
+        try { recognizer?.cancel() } catch (_: Exception) {}
+        try { recognizer?.destroy() } catch (_: Exception) {}
+        try { pfd?.close() } catch (_: Exception) {}
+        pcmFile?.delete()
+    }
 
     private fun decodeToPcm(filePath: String): File {
         val extractor = MediaExtractor()
@@ -115,9 +307,9 @@ class AudioTranscriber(private val context: Context) {
                 }
             }
         } finally {
-            decoder.stop()
-            decoder.release()
-            extractor.release()
+            try { decoder.stop() } catch (_: Exception) {}
+            try { decoder.release() } catch (_: Exception) {}
+            try { extractor.release() } catch (_: Exception) {}
         }
 
         if (rawOut.size() == 0) throw IllegalStateException("Decoded audio is empty")
@@ -128,11 +320,34 @@ class AudioTranscriber(private val context: Context) {
         val encoding = if (fmt.containsKey(MediaFormat.KEY_PCM_ENCODING)) fmt.getInteger(MediaFormat.KEY_PCM_ENCODING) else AudioFormat.ENCODING_PCM_16BIT
 
         val pcm = toPcm16Mono(rawOut.toByteArray(), sampleRate, channels, encoding, 16000)
+        VoiceLogger.d("Transcriber", "PCM ready", "VM-TRANS-001", mapOf(
+            "srcRate" to sampleRate.toString(),
+            "channels" to channels.toString(),
+            "pcmBytes" to pcm.size.toString(),
+            "rms" to pcmRms(pcm).toString()))
+        if (pcmRms(pcm) < 200) {
+            VoiceLogger.w("Transcriber", "Decoded PCM looks too quiet", "VM-TRANS-WARN-003")
+        }
         val pcmFile = File(context.cacheDir, "vm_pcm_${System.currentTimeMillis()}.raw")
         pcmFile.writeBytes(pcm)
-        VoiceLogger.d("Transcriber", "PCM ready", "VM-TRANS-001", mapOf(
-            "srcRate" to sampleRate.toString(), "channels" to channels.toString(), "pcmBytes" to pcm.size.toString()))
         return pcmFile
+    }
+
+    private fun pcmRms(pcm: ByteArray): Double {
+        if (pcm.size < 2) return 0.0
+        val bb = ByteBuffer.wrap(pcm).order(ByteOrder.LITTLE_ENDIAN)
+        var sum = 0L
+        val count = pcm.size / 2
+        val step = maxOf(1, count / 8000)
+        var sampled = 0
+        var i = 0
+        while (i < count) {
+            val s = bb.getShort(i * 2).toInt().toLong()
+            sum += s * s
+            sampled++
+            i += step
+        }
+        return if (sampled == 0) 0.0 else Math.sqrt(sum.toDouble() / sampled)
     }
 
     private fun toPcm16Mono(raw: ByteArray, sampleRate: Int, channels: Int, encoding: Int, targetRate: Int): ByteArray {
@@ -176,77 +391,6 @@ class AudioTranscriber(private val context: Context) {
         val bb = ByteBuffer.allocate(out.size * 2).order(ByteOrder.LITTLE_ENDIAN)
         for (s in out) bb.putShort(s)
         return bb.array()
-    }
-
-    private fun finish(pfd: ParcelFileDescriptor?, recognizer: SpeechRecognizer?, pcmFile: File?) {
-        try { recognizer?.cancel() } catch (_: Exception) {}
-        try { recognizer?.destroy() } catch (_: Exception) {}
-        try { pfd?.close() } catch (_: Exception) {}
-        pcmFile?.delete()
-    }
-
-    private fun startRecognition(pcmFile: File, language: String, callback: Callback) {
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            finish(null, null, pcmFile)
-            callback.onError("Speech recognition is not available on this device")
-            return
-        }
-
-        val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        if (connectivity.activeNetwork == null) {
-            finish(null, null, pcmFile)
-            callback.onError("No internet connection. Connect to the internet to use Google transcription.")
-            return
-        }
-
-        val pfd = try {
-            ParcelFileDescriptor.open(pcmFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        } catch (e: Exception) {
-            finish(null, null, pcmFile)
-            callback.onError("Could not open audio: ${e.message}")
-            return
-        }
-
-        val recognizer = SpeechRecognizer.createSpeechRecognizer(context)
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, language.ifBlank { "en" })
-            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
-            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pfd)
-            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, 16000)
-            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT)
-            putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
-            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
-        }
-
-        recognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onBeginningOfSpeech() {}
-            override fun onBufferReceived(bytes: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-
-            override fun onResults(results: Bundle?) {
-                val text = results?.getStringArrayList(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.trim().orEmpty()
-                finish(pfd, recognizer, pcmFile)
-                if (text.isNotBlank()) {
-                    VoiceLogger.d("Transcriber", "Transcription ready", "VM-TRANS-002")
-                    callback.onResult(text)
-                } else {
-                    callback.onError("No speech recognized in the recording")
-                }
-            }
-
-            override fun onError(error: Int) {
-                finish(pfd, recognizer, pcmFile)
-                VoiceLogger.e("Transcriber", "Recognition error", "VM-TRANS-ERR-002", null, mapOf("code" to error.toString()))
-                callback.onError(errorMessage(error))
-            }
-        })
-
-        recognizer.startListening(intent)
     }
 
     private fun errorMessage(error: Int): String = when (error) {

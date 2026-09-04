@@ -95,7 +95,7 @@ fun DetailScreen(recordingId: Long, viewModel: VoiceViewModel, onNavigateBack: (
             )
             Spacer(Modifier.height(8.dp))
             Card(Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = VMCard)) {
-                Text(recording.transcription.ifBlank { "No transcription yet. Tap Transcribe (requires internet) to convert this recording to text with Google." }, color = if (recording.transcription.isBlank()) VMTextMuted else VMTextPrimary, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(16.dp))
+                Text(recording.transcription.ifBlank { "No transcription yet. Tap Transcribe (requires internet) to convert this recording to text - it may briefly play the clip out loud on some devices." }, color = if (recording.transcription.isBlank()) VMTextMuted else VMTextPrimary, fontSize = 14.sp, lineHeight = 22.sp, modifier = Modifier.padding(16.dp))
             }
 
             // Export
